@@ -1,0 +1,6 @@
+{
+  "name": "VibeForge AI Studio",
+  "description": "VibeForge AI Studio is a next-gen, mobile AI-powered coding assistant.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
