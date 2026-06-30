@@ -170,7 +170,7 @@ fun ChatScreen(
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                listOf("GEMINI", "OPENAI", "CLAUDE", "GROQ", "DEEPSEEK").forEach { p ->
+                listOf("GEMINI", "OPENAI", "CLAUDE", "GROQ", "DEEPSEEK", "CUSTOM").forEach { p ->
                     val isSelected = provider.uppercase() == p
                     FilterChip(
                         selected = isSelected,
@@ -901,6 +901,9 @@ fun ApiKeySettingsScreen(
     var keyVal by remember { mutableStateOf("") }
     var customUrl by remember { mutableStateOf("") }
     var isDefault by remember { mutableStateOf(false) }
+    var apiFormat by remember { mutableStateOf("OPENAI") }
+    var customModel by remember { mutableStateOf("") }
+    var isCustomEndpoint by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -918,6 +921,9 @@ fun ApiKeySettingsScreen(
                     keyVal = ""
                     customUrl = ""
                     isDefault = true
+                    apiFormat = "OPENAI"
+                    customModel = ""
+                    isCustomEndpoint = false
                     showAddDialog = true
                 },
                 containerColor = AccentTeal,
@@ -999,6 +1005,9 @@ fun ApiKeySettingsScreen(
                                 keyVal = "" // Do not display raw encrypted key values for safety
                                 customUrl = key.baseUrl
                                 isDefault = key.isDefault
+                                apiFormat = key.apiFormat
+                                customModel = key.customModel ?: ""
+                                isCustomEndpoint = key.isCustomEndpoint
                                 showAddDialog = true
                             },
                             onDelete = { viewModel.deleteApiKey(key) }
@@ -1037,13 +1046,18 @@ fun ApiKeySettingsScreen(
                                 .horizontalScroll(rememberScrollState()),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            listOf("GEMINI", "OPENAI", "CLAUDE", "GROQ", "DEEPSEEK", "OLLAMA").forEach { p ->
+                            listOf("GEMINI", "OPENAI", "CLAUDE", "GROQ", "DEEPSEEK", "OLLAMA", "CUSTOM").forEach { p ->
                                 val selected = provider == p
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(8.dp))
                                         .background(if (selected) AccentTeal else Color.Black)
-                                        .clickable { provider = p }
+                                        .clickable { 
+                                            provider = p 
+                                            if (p == "CUSTOM") {
+                                                isCustomEndpoint = true
+                                            }
+                                        }
                                         .padding(horizontal = 10.dp, vertical = 6.dp)
                                 ) {
                                     Text(p, color = if (selected) Color.Black else Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
@@ -1074,12 +1088,65 @@ fun ApiKeySettingsScreen(
                         OutlinedTextField(
                             value = customUrl,
                             onValueChange = { customUrl = it },
-                            placeholder = { Text("Custom Endpoint (e.g. LM Studio proxy)", color = Color.Gray) },
+                            placeholder = { Text("Custom Endpoint Base URL (e.g. https://api.custom.com/v1)", color = Color.Gray) },
                             textStyle = TextStyle(color = Color.White),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("key_endpoint_input")
                         )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = isCustomEndpoint,
+                                onCheckedChange = { 
+                                    isCustomEndpoint = it 
+                                    if (it) {
+                                        provider = "CUSTOM"
+                                    }
+                                },
+                                colors = CheckboxDefaults.colors(checkedColor = AccentTeal)
+                            )
+                            Text("Enable Universal / Custom Endpoint Mode", color = Color.White, fontSize = 13.sp)
+                        }
+
+                        if (isCustomEndpoint) {
+                            Text("Custom API Format", color = Color.LightGray, fontSize = 11.sp)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                listOf("OPENAI", "ANTHROPIC").forEach { fmt ->
+                                    val selected = apiFormat.uppercase() == fmt
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(if (selected) AccentTeal else Color.Black)
+                                            .clickable { apiFormat = fmt }
+                                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                                    ) {
+                                        Text(
+                                            text = if (fmt == "OPENAI") "OpenAI-compatible" else "Anthropic-compatible",
+                                            color = if (selected) Color.Black else Color.White,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+
+                            OutlinedTextField(
+                                value = customModel,
+                                onValueChange = { customModel = it },
+                                placeholder = { Text("Model Name Override (e.g. gpt-4.1)", color = Color.Gray) },
+                                textStyle = TextStyle(color = Color.White),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("key_custom_model_input")
+                            )
+                        }
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -1106,14 +1173,26 @@ fun ApiKeySettingsScreen(
                                 onClick = {
                                     if (name.trim().isNotEmpty()) {
                                         if (currentEditingKey == null) {
-                                            viewModel.addApiKey(provider, name, keyVal, customUrl, isDefault)
+                                            viewModel.addApiKey(
+                                                provider = provider,
+                                                name = name,
+                                                key = keyVal,
+                                                baseUrl = customUrl,
+                                                isDefault = isDefault,
+                                                apiFormat = apiFormat,
+                                                customModel = customModel.takeIf { it.isNotEmpty() },
+                                                isCustomEndpoint = isCustomEndpoint
+                                            )
                                         } else {
                                             viewModel.editApiKey(
-                                                currentEditingKey!!,
-                                                name,
-                                                keyVal.takeIf { it.isNotEmpty() },
-                                                customUrl,
-                                                isDefault
+                                                entity = currentEditingKey!!,
+                                                name = name,
+                                                key = keyVal.takeIf { it.isNotEmpty() },
+                                                baseUrl = customUrl,
+                                                isDefault = isDefault,
+                                                apiFormat = apiFormat,
+                                                customModel = customModel.takeIf { it.isNotEmpty() },
+                                                isCustomEndpoint = isCustomEndpoint
                                             )
                                         }
                                         showAddDialog = false

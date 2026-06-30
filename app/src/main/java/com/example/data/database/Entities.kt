@@ -6,13 +6,16 @@ import androidx.room.PrimaryKey
 @Entity(tableName = "api_keys")
 data class ApiKeyEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
-    val provider: String, // GEMINI, OPENAI, CLAUDE, GROQ, DEEPSEEK
+    val provider: String, // GEMINI, OPENAI, CLAUDE, GROQ, DEEPSEEK, CUSTOM
     val name: String,
     val encryptedKey: String,
     val baseUrl: String,
     val status: String, // Active, Inactive, Exhausted
     val lastTested: Long = 0L,
-    val isDefault: Boolean = false
+    val isDefault: Boolean = false,
+    val apiFormat: String = "OPENAI", // OPENAI or ANTHROPIC
+    val customModel: String? = null,
+    val isCustomEndpoint: Boolean = false
 )
 
 @Entity(tableName = "chat_sessions")

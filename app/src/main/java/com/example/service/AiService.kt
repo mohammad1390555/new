@@ -87,8 +87,19 @@ class AiService {
             val apiKey = com.example.data.security.CryptoHelper.decrypt(apiKeyEntity.encryptedKey)
 
             try {
-                val flowToCollect = when (provider.uppercase()) {
-                    "GEMINI" -> streamGemini(apiKey, messages, systemInstruction, tools, apiKeyEntity.baseUrl, customModel)
+                val flowToCollect = when {
+                    apiKeyEntity.isCustomEndpoint || provider.uppercase() == "CUSTOM" -> {
+                        streamCustomEndpoint(
+                            apiKey = apiKey,
+                            baseUrl = apiKeyEntity.baseUrl,
+                            model = apiKeyEntity.customModel ?: customModel ?: "gpt-4o-mini",
+                            apiFormat = apiKeyEntity.apiFormat,
+                            messages = messages,
+                            systemInstruction = systemInstruction,
+                            tools = tools
+                        )
+                    }
+                    provider.uppercase() == "GEMINI" -> streamGemini(apiKey, messages, systemInstruction, tools, apiKeyEntity.baseUrl, customModel)
                     else -> streamOpenAiCompatible(apiKey, provider, messages, systemInstruction, tools, customBaseUrl ?: apiKeyEntity.baseUrl, customModel)
                 }
                 
@@ -373,6 +384,215 @@ class AiService {
                     }
                 } catch (e: Exception) {
                     // Ignore decoding failures of partial SSE chunks
+                }
+            }
+        }
+    }
+
+    fun streamCustomEndpoint(
+        apiKey: String,
+        baseUrl: String,
+        model: String,
+        apiFormat: String,
+        messages: List<ChatMessage>,
+        systemInstruction: String,
+        tools: List<ToolDefinition> = emptyList(),
+        temperature: Double = 0.7
+    ): Flow<AiResponseChunk> {
+        return if (apiFormat.uppercase() == "ANTHROPIC") {
+            streamAnthropicCustom(apiKey, baseUrl, model, messages, systemInstruction, temperature)
+        } else {
+            streamOpenAiCustom(apiKey, baseUrl, model, messages, systemInstruction, tools, temperature)
+        }
+    }
+
+    private fun streamOpenAiCustom(
+        apiKey: String,
+        baseUrl: String,
+        model: String,
+        messages: List<ChatMessage>,
+        systemInstruction: String,
+        tools: List<ToolDefinition>,
+        temperature: Double
+    ): Flow<AiResponseChunk> = flow {
+        val finalBaseUrl = if (baseUrl.isEmpty()) "https://api.openai.com/" else baseUrl
+        val url = if (finalBaseUrl.endsWith("/")) "${finalBaseUrl}v1/chat/completions" else "$finalBaseUrl/v1/chat/completions"
+
+        val openAiMessages = mutableListOf<Map<String, Any>>()
+        if (systemInstruction.isNotEmpty()) {
+            openAiMessages.add(mapOf("role" to "system", "content" to systemInstruction))
+        }
+
+        messages.forEach { msg ->
+            val roleStr = when (msg.role) {
+                ChatRole.User -> "user"
+                ChatRole.Assistant -> "assistant"
+                ChatRole.System -> "system"
+                is ChatRole.Tool -> "tool"
+            }
+            if (msg.role is ChatRole.Tool) {
+                openAiMessages.add(mapOf(
+                    "role" to roleStr,
+                    "tool_call_id" to msg.role.callId,
+                    "name" to msg.role.name,
+                    "content" to msg.content
+                ))
+            } else {
+                openAiMessages.add(mapOf("role" to roleStr, "content" to msg.content))
+            }
+        }
+
+        val requestBodyMap = mutableMapOf<String, Any>(
+            "model" to model,
+            "messages" to openAiMessages,
+            "stream" to true,
+            "temperature" to temperature
+        )
+
+        if (tools.isNotEmpty()) {
+            val toolsList = tools.map { t ->
+                mapOf(
+                    "type" to "function",
+                    "function" to mapOf(
+                        "name" to t.name,
+                        "description" to t.description,
+                        "parameters" to mapOf(
+                            "type" to "OBJECT",
+                            "properties" to t.parameters,
+                            "required" to t.parameters.keys.toList()
+                        )
+                    )
+                )
+            }
+            requestBodyMap["tools"] = toolsList
+        }
+
+        val jsonStr = moshi.adapter(Map::class.java).toJson(requestBodyMap)
+        val requestBuilder = Request.Builder()
+            .url(url)
+            .post(jsonStr.toRequestBody(mediaTypeJson))
+
+        if (apiKey.isNotEmpty()) {
+            requestBuilder.header("Authorization", "Bearer $apiKey")
+        }
+
+        val request = requestBuilder.build()
+
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                emit(AiResponseChunk.Error("Custom OpenAI Error: Code ${response.code}. Msg: ${response.message}"))
+                return@flow
+            }
+
+            val reader = BufferedReader(InputStreamReader(response.body?.byteStream(), Charsets.UTF_8))
+            var line: String?
+
+            while (reader.readLine().also { line = it } != null) {
+                val trimmed = line!!.trim()
+                if (!trimmed.startsWith("data: ")) continue
+                val data = trimmed.removePrefix("data: ").trim()
+                if (data == "[DONE]") break
+
+                try {
+                    val chunkMap = moshi.adapter(Map::class.java).fromJson(data)
+                    val choices = chunkMap?.get("choices") as? List<*>
+                    val choice = choices?.firstOrNull() as? Map<*, *>
+                    
+                    val delta = choice?.get("delta") as? Map<*, *>
+                    val toolCallsList = delta?.get("tool_calls") as? List<*>
+                    if (toolCallsList != null && toolCallsList.isNotEmpty()) {
+                        val toolCalls = toolCallsList.mapNotNull { tc ->
+                            val tcMap = tc as? Map<*, *>
+                            val id = tcMap?.get("id") as? String ?: "call_id"
+                            val function = tcMap?.get("function") as? Map<*, *>
+                            val name = function?.get("name") as? String ?: ""
+                            val args = function?.get("arguments") as? String ?: ""
+                            if (name.isNotEmpty()) ToolCall(id, name, args) else null
+                        }
+                        if (toolCalls.isNotEmpty()) {
+                            emit(AiResponseChunk.FunctionCallRequest(toolCalls))
+                        }
+                    } else {
+                        val text = delta?.get("content") as? String
+                        if (text != null) {
+                            emit(AiResponseChunk.Content(text))
+                        }
+                    }
+                } catch (e: Exception) {
+                }
+            }
+        }
+    }
+
+    private fun streamAnthropicCustom(
+        apiKey: String,
+        baseUrl: String,
+        model: String,
+        messages: List<ChatMessage>,
+        systemInstruction: String,
+        temperature: Double
+    ): Flow<AiResponseChunk> = flow {
+        val finalBaseUrl = if (baseUrl.isEmpty()) "https://api.anthropic.com/" else baseUrl
+        val url = if (finalBaseUrl.endsWith("/")) "${finalBaseUrl}v1/messages" else "$finalBaseUrl/v1/messages"
+
+        val anthropicMessages = messages.map { msg ->
+            val roleStr = when (msg.role) {
+                ChatRole.User -> "user"
+                ChatRole.Assistant -> "assistant"
+                else -> "user"
+            }
+            mapOf("role" to roleStr, "content" to msg.content)
+        }
+
+        val requestBodyMap = mutableMapOf<String, Any>(
+            "model" to model,
+            "messages" to anthropicMessages,
+            "max_tokens" to 2048,
+            "stream" to true,
+            "temperature" to temperature
+        )
+
+        if (systemInstruction.isNotEmpty()) {
+            requestBodyMap["system"] = systemInstruction
+        }
+
+        val jsonStr = moshi.adapter(Map::class.java).toJson(requestBodyMap)
+        val requestBuilder = Request.Builder()
+            .url(url)
+            .post(jsonStr.toRequestBody(mediaTypeJson))
+
+        if (apiKey.isNotEmpty()) {
+            requestBuilder.header("x-api-key", apiKey)
+        }
+        requestBuilder.header("anthropic-version", "2023-06-01")
+
+        val request = requestBuilder.build()
+
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                emit(AiResponseChunk.Error("Custom Anthropic Error: Code ${response.code}. Msg: ${response.message}"))
+                return@flow
+            }
+
+            val reader = BufferedReader(InputStreamReader(response.body?.byteStream(), Charsets.UTF_8))
+            var line: String?
+
+            while (reader.readLine().also { line = it } != null) {
+                val trimmed = line!!.trim()
+                if (!trimmed.startsWith("data: ")) continue
+                val data = trimmed.removePrefix("data: ").trim()
+
+                try {
+                    val chunkMap = moshi.adapter(Map::class.java).fromJson(data)
+                    val type = chunkMap?.get("type") as? String
+                    if (type == "content_block_delta") {
+                        val deltaMap = chunkMap["delta"] as? Map<*, *>
+                        val text = deltaMap?.get("text") as? String
+                        if (text != null) {
+                            emit(AiResponseChunk.Content(text))
+                        }
+                    }
+                } catch (e: Exception) {
                 }
             }
         }

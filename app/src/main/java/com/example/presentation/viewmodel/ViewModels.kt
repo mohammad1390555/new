@@ -30,15 +30,33 @@ class ApiKeyViewModel(private val useCase: ManageApiKeysUseCase) : ViewModel() {
     private val _isTesting = MutableStateFlow<Map<Int, Boolean>>(emptyMap())
     val isTesting: StateFlow<Map<Int, Boolean>> = _isTesting.asStateFlow()
 
-    fun addApiKey(provider: String, name: String, key: String, baseUrl: String, isDefault: Boolean) {
+    fun addApiKey(
+        provider: String,
+        name: String,
+        key: String,
+        baseUrl: String,
+        isDefault: Boolean,
+        apiFormat: String = "OPENAI",
+        customModel: String? = null,
+        isCustomEndpoint: Boolean = false
+    ) {
         viewModelScope.launch {
-            useCase.addKey(provider, name, key, baseUrl, isDefault)
+            useCase.addKey(provider, name, key, baseUrl, isDefault, apiFormat, customModel, isCustomEndpoint)
         }
     }
 
-    fun editApiKey(entity: ApiKeyEntity, name: String, key: String?, baseUrl: String, isDefault: Boolean) {
+    fun editApiKey(
+        entity: ApiKeyEntity,
+        name: String,
+        key: String?,
+        baseUrl: String,
+        isDefault: Boolean,
+        apiFormat: String = "OPENAI",
+        customModel: String? = null,
+        isCustomEndpoint: Boolean = false
+    ) {
         viewModelScope.launch {
-            useCase.editKey(entity, name, key, baseUrl, isDefault)
+            useCase.editKey(entity, name, key, baseUrl, isDefault, apiFormat, customModel, isCustomEndpoint)
         }
     }
 

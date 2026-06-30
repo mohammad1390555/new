@@ -17,9 +17,12 @@ class ManageApiKeysUseCase(private val repository: ApiKeyRepository) {
         name: String,
         plainKey: String,
         baseUrl: String,
-        isDefault: Boolean = false
+        isDefault: Boolean = false,
+        apiFormat: String = "OPENAI",
+        customModel: String? = null,
+        isCustomEndpoint: Boolean = false
     ): Result<Long> = runCatching {
-        repository.insertKey(provider, name, plainKey, baseUrl, "Active", isDefault)
+        repository.insertKey(provider, name, plainKey, baseUrl, "Active", isDefault, apiFormat, customModel, isCustomEndpoint)
     }
 
     suspend fun editKey(
@@ -27,12 +30,18 @@ class ManageApiKeysUseCase(private val repository: ApiKeyRepository) {
         name: String,
         plainKey: String?,
         baseUrl: String,
-        isDefault: Boolean
+        isDefault: Boolean,
+        apiFormat: String = "OPENAI",
+        customModel: String? = null,
+        isCustomEndpoint: Boolean = false
     ): Result<Unit> = runCatching {
         val updated = entity.copy(
             name = name,
             baseUrl = baseUrl,
-            isDefault = isDefault
+            isDefault = isDefault,
+            apiFormat = apiFormat,
+            customModel = customModel,
+            isCustomEndpoint = isCustomEndpoint
         )
         repository.updateKey(updated, plainKey)
     }
@@ -58,41 +67,39 @@ class ManageApiKeysUseCase(private val repository: ApiKeyRepository) {
             .readTimeout(10, TimeUnit.SECONDS)
             .build()
 
-        val url = when (entity.provider.uppercase()) {
-            "GEMINI" -> {
+        val isAnthropic = entity.provider.uppercase() == "ANTHROPIC" || (entity.isCustomEndpoint && entity.apiFormat.uppercase() == "ANTHROPIC")
+        val isOpenAi = entity.provider.uppercase() == "OPENAI" || entity.provider.uppercase() == "GROQ" || entity.provider.uppercase() == "DEEPSEEK" || (entity.isCustomEndpoint && entity.apiFormat.uppercase() == "OPENAI")
+        val isGemini = entity.provider.uppercase() == "GEMINI"
+
+        val url = when {
+            isGemini -> {
                 val finalBaseUrl = if (entity.baseUrl.isEmpty()) "https://generativelanguage.googleapis.com/" else entity.baseUrl
                 "${finalBaseUrl}v1beta/models?key=$plainKey"
             }
-            "OPENAI" -> {
+            isOpenAi -> {
                 val finalBaseUrl = if (entity.baseUrl.isEmpty()) "https://api.openai.com/" else entity.baseUrl
                 if (finalBaseUrl.endsWith("/")) "${finalBaseUrl}v1/models" else "$finalBaseUrl/v1/models"
             }
-            "GROQ" -> {
-                val finalBaseUrl = if (entity.baseUrl.isEmpty()) "https://api.groq.com/openai/" else entity.baseUrl
-                if (finalBaseUrl.endsWith("/")) "${finalBaseUrl}v1/models" else "$finalBaseUrl/v1/models"
-            }
-            "DEEPSEEK" -> {
-                val finalBaseUrl = if (entity.baseUrl.isEmpty()) "https://api.deepseek.com/" else entity.baseUrl
-                if (finalBaseUrl.endsWith("/")) "${finalBaseUrl}v1/models" else "$finalBaseUrl/v1/models"
-            }
-            "ANTHROPIC" -> {
-                // Anthropic doesn't have a simple GET v1/models endpoint without heavy setup. Let's hit v1/messages with an invalid body to test authentication,
-                // or simply do a test with headers.
+            isAnthropic -> {
                 val finalBaseUrl = if (entity.baseUrl.isEmpty()) "https://api.anthropic.com/" else entity.baseUrl
                 if (finalBaseUrl.endsWith("/")) "${finalBaseUrl}v1/messages" else "$finalBaseUrl/v1/messages"
             }
             else -> {
-                // Local Ollama
+                // Local Ollama / Custom other
                 val finalBaseUrl = if (entity.baseUrl.isEmpty()) "http://10.0.2.2:11434/" else entity.baseUrl
                 if (finalBaseUrl.endsWith("/")) "${finalBaseUrl}api/tags" else "$finalBaseUrl/api/tags"
             }
         }
 
         val requestBuilder = Request.Builder().url(url)
-        if (entity.provider.uppercase() == "OPENAI" || entity.provider.uppercase() == "GROQ" || entity.provider.uppercase() == "DEEPSEEK") {
-            requestBuilder.header("Authorization", "Bearer $plainKey")
-        } else if (entity.provider.uppercase() == "ANTHROPIC") {
-            requestBuilder.header("x-api-key", plainKey)
+        if (isOpenAi) {
+            if (plainKey.isNotEmpty()) {
+                requestBuilder.header("Authorization", "Bearer $plainKey")
+            }
+        } else if (isAnthropic) {
+            if (plainKey.isNotEmpty()) {
+                requestBuilder.header("x-api-key", plainKey)
+            }
             requestBuilder.header("anthropic-version", "2023-06-01")
         }
 
@@ -101,7 +108,7 @@ class ManageApiKeysUseCase(private val repository: ApiKeyRepository) {
             val responseCode = response.code
             response.close()
 
-            val success = if (entity.provider.uppercase() == "ANTHROPIC") {
+            val success = if (isAnthropic) {
                 // For Anthropic, a 400 Bad Request with "x-api-key" means auth passed (an invalid key gives 401 Unauthorized)
                 responseCode == 200 || responseCode == 400
             } else {

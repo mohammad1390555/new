@@ -24,7 +24,10 @@ class ApiKeyRepository(private val apiKeyDao: ApiKeyDao) {
         plainKey: String,
         baseUrl: String,
         status: String,
-        isDefault: Boolean = false
+        isDefault: Boolean = false,
+        apiFormat: String = "OPENAI",
+        customModel: String? = null,
+        isCustomEndpoint: Boolean = false
     ): Long = withContext(Dispatchers.IO) {
         val encrypted = CryptoHelper.encrypt(plainKey)
         val entity = ApiKeyEntity(
@@ -33,7 +36,10 @@ class ApiKeyRepository(private val apiKeyDao: ApiKeyDao) {
             encryptedKey = encrypted,
             baseUrl = baseUrl,
             status = status,
-            isDefault = isDefault
+            isDefault = isDefault,
+            apiFormat = apiFormat,
+            customModel = customModel,
+            isCustomEndpoint = isCustomEndpoint
         )
         if (isDefault) {
             apiKeyDao.clearDefaultKeysForProvider(provider)
