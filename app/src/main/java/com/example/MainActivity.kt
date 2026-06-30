@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Science
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -19,6 +20,7 @@ import androidx.lifecycle.ViewModelProvider
 import com.example.presentation.screens.ApiKeySettingsScreen
 import com.example.presentation.screens.ChatScreen
 import com.example.presentation.screens.WorkspaceScreen
+import com.example.presentation.screens.LabsScreen
 import com.example.presentation.viewmodel.ApiKeyViewModel
 import com.example.presentation.viewmodel.ChatViewModel
 import com.example.presentation.viewmodel.ViewModelFactory
@@ -105,6 +107,19 @@ class MainActivity : ComponentActivity() {
                             indicatorColor = ImmersiveAccent.copy(alpha = 0.2f)
                         )
                     )
+                    NavigationBarItem(
+                        selected = currentTab == "labs",
+                        onClick = { currentTab = "labs" },
+                        icon = { Icon(Icons.Default.Science, contentDescription = "Labs") },
+                        label = { Text("Labs") },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Color(0xFF818CF8),
+                            selectedTextColor = Color(0xFF93C5FD),
+                            unselectedIconColor = Slate500,
+                            unselectedTextColor = Slate500,
+                            indicatorColor = ImmersiveAccent.copy(alpha = 0.2f)
+                        )
+                    )
                 }
             }
         ) { innerPadding ->
@@ -117,6 +132,7 @@ class MainActivity : ComponentActivity() {
                     "chat" -> ChatScreen(chatViewModel, workspaceViewModel)
                     "workspace" -> WorkspaceScreen(workspaceViewModel)
                     "settings" -> ApiKeySettingsScreen(apiKeyViewModel)
+                    "labs" -> LabsScreen()
                 }
             }
         }
